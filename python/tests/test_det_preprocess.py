@@ -41,3 +41,41 @@ def test_det_preprocess_respects_limit_side_len(
 
     assert len(det_inputs) == 1
     assert det_inputs[0].shape == (1, 3, *expected_hw)
+
+
+def test_det_does_not_probe_omegaconf_mean_std_on_every_call(monkeypatch):
+    # mean/std come from the omegaconf config as ListConfig. Passing them to
+    # np.array() on every call made NumPy probe ListConfig for __array__ & co.
+    # Each probe raised ConfigAttributeError, and with omegaconf<2.4 the
+    # resulting reference cycles kept the input image alive until a full gc.
+    import rapidocr.ch_ppocr_det.main as det_main
+    from omegaconf import ListConfig, OmegaConf
+
+    det_inputs = []
+    monkeypatch.setattr(
+        det_main, "get_engine", lambda engine_type: lambda cfg: det_inputs.append
+    )
+    cfg = OmegaConf.create(
+        {
+            "engine_type": "onnxruntime",
+            "limit_side_len": 736,
+            "limit_type": "min",
+            "mean": [0.5, 0.5, 0.5],
+            "std": [0.5, 0.5, 0.5],
+        }
+    )
+    detector = TextDetector(cfg)
+    detector.postprocess_op = lambda preds, ori_shape: ([], [])
+
+    probed = []
+    orig_getattr = ListConfig.__getattr__
+
+    def spy_getattr(self, key):
+        probed.append(key)
+        return orig_getattr(self, key)
+
+    monkeypatch.setattr(ListConfig, "__getattr__", spy_getattr)
+    detector(np.zeros((64, 64, 3), dtype=np.uint8))
+
+    assert len(det_inputs) == 1
+    assert probed == []

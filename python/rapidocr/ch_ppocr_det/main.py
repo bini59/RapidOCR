@@ -15,7 +15,7 @@
 # @Author: SWHL
 # @Contact: liekkaskono@163.com
 import time
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -30,8 +30,13 @@ class TextDetector:
     def __init__(self, cfg: Dict[str, Any]):
         self.limit_side_len = cfg.get("limit_side_len")
         self.limit_type = cfg.get("limit_type")
-        self.mean = cfg.get("mean")
-        self.std = cfg.get("std")
+        # Store mean/std as plain lists. When they stay as omegaconf ListConfig,
+        # np.array() probes them for __array__ & co. on every call, and each
+        # probe raises a ConfigAttributeError. With omegaconf<2.4 its traceback
+        # forms a reference cycle that keeps the input image alive until a full
+        # gc run.
+        self.mean = self._to_list(cfg.get("mean"))
+        self.std = self._to_list(cfg.get("std"))
         self.preprocess_op = None
 
         post_process = {
@@ -66,6 +71,12 @@ class TextDetector:
         boxes = self.sorted_boxes(boxes)
         elapse = time.perf_counter() - start_time
         return TextDetOutput(img, boxes, scores, elapse=elapse)
+
+    @staticmethod
+    def _to_list(value: Any) -> Optional[List[float]]:
+        if value is None:
+            return None
+        return list(value)
 
     def get_preprocess(self) -> DetPreProcess:
         return DetPreProcess(self.limit_side_len, self.limit_type, self.mean, self.std)
